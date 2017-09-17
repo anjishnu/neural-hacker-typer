@@ -83,6 +83,64 @@ def save(args):
     torch.save(decoder, save_filename)
     print('Saved as %s' % save_filename)
 
+
+
+class Generator(object):
+     '''
+     Class to encapsulate generator functionality
+     '''
+     def __init__(self, decoder):
+          self.decoder = decoder
+
+     def generate(self, *args, **kwargs):
+          raise NotImplementedError
+
+
+class SimpleGenerator(Generator):
+
+     def generate(self,
+                  prime_str='int ',
+                  predict_len=100,
+                  temperature=0.1,
+                  cuda=False,
+                  args=None,
+                  hidden=None):
+
+          prime_input = Variable(char_tensor(prime_str).unsqueeze(0))
+          
+          if not hidden:
+               hidden = decoder.init_hidden(1)
+               prime_input = Variable(char_tensor(prime_str).unsqueeze(0))
+          
+               if cuda:
+                    hidden = hidden.cuda()
+                    prime_input = prime_input.cuda()        
+                    # Use priming string to "build up" hidden state
+               for p in range(len(prime_str) - 1):
+                    _, hidden = decoder(prime_input[:,p], hidden)        
+               
+          predicted = ''
+          inp = prime_input[:,-1]
+          p_list = []
+
+
+          for p in range(predict_len):
+               output, hidden = decoder(inp, hidden)        
+               # Sample from the network as a multinomial distribution
+               output_dist = output.data.view(-1).div(temperature).exp()
+               top_i = torch.multinomial(output_dist, 1)[0]
+               p_list.append(top_i)
+               # Add predicted character to string and use as next input
+               predicted_char = all_characters[top_i]
+        
+               predicted += predicted_char
+               inp = Variable(char_tensor(predicted_char).unsqueeze(0))
+               if cuda: inp = inp.cuda()
+
+          # print (p_list)
+          return predicted, hidden
+          
+    
 def generate(decoder,
              prime_str='int ',
              predict_len=100,
@@ -230,7 +288,7 @@ if __name__ == '__main__':
 
     
     
-    SYMBOL_TABLE = os.path.join('saved_model', 'vocab.sym')
+    SYMBOL_TABLE = os.path.join('../saved_model', 'vocab.sym')
     if args.type and os.path.exists(SYMBOL_TABLE):
          all_characters = list(set(open(SYMBOL_TABLE).read()))
     else:
@@ -253,27 +311,32 @@ if __name__ == '__main__':
          # Enter typing mode
          print ('Typing Mode...')
 
-         decoder = torch.load('saved_model/linux.pt')         
-         prime_text = 'struct'
-         sys.stdout.write(prime_text)
-
+         decoder = torch.load('../saved_model/linux.pt')         
          from typing import build_getch
-         
+
+
          with build_getch() as getch:
               try:
                    getchar = getch()
                    hidden = None
-                   while(getchar!='~'):
-                        output_text, hidden = generate(decoder, prime_text, 20,
-                                                       cuda=args.cuda, args=args,
-                                                       hidden=hidden)
+                   generator = SimpleGenerator(decoder)
+                   prime_text = 'struct'
+                   sys.stdout.write(prime_text)
 
+                   while(getchar!='~'):
+                        #output_text, hidden = generate(decoder, prime_text, 20,
+                        #                               cuda=args.cuda, args=args,
+                        #                               hidden=hidden)
+                        output_text, hidden = generator.generate(prime_text, 20,
+                                                                 cuda=args.cuda, args=args,
+                                                                 hidden=hidden)
                         sys.stdout.write(output_text)
                         prime_text += output_text
                         getchar = getch()
                         if len(prime_text) > 100:
                              prime_text = prime_text[-100:]
                    getch.reset()
+
               except (KeyboardInterrupt, Exception) as e:
                    getch.reset()
                    print (e.message)
